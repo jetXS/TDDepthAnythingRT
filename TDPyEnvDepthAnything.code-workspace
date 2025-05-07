@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"editor.rulers": [
+			80,
+			120
+		],
+		"python.defaultInterpreterPath": "C:\\Program Files\\Derivative\\TouchDesigner.2023.32450\\bin\\python.exe",
+		"python.analysis.autoSearchPaths": true,
+		"python.autoComplete.extraPaths": [
+			"C:\\Program Files\\Derivative\\TouchDesigner.2023.32450\\bin\\python\\Lib\\site-packages",
+			".\\scripts",
+			".\\TDPyEnvDepthAnything_vEnv\\Lib\\site-packages",
+		],
+		"python.analysis.extraPaths": [
+			"C:\\Program Files\\Derivative\\TouchDesigner.2023.32450\\bin\\python\\Lib\\site-packages",
+			".\\scripts",
+			".\\TDPyEnvDepthAnything_vEnv\\Lib\\site-packages",
+		],
+	}
+}
