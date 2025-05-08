@@ -16,7 +16,7 @@ Original code by Oleg Chomp (@olegchomp) and update by JetXS (Michel Didier, Der
 ## Usage
 Tested with TouchDesigner 2023.30k+
 
-#### Install:
+## Install:
 1. Open the project, open the textport if not opened
 2. On the TDPyEnvManager, click on "Create from requirements.txt"
 3. Wait a bit while environment is being setup
@@ -26,6 +26,15 @@ Tested with TouchDesigner 2023.30k+
 7. Turn on Active par and have fun
 
 Note: Next time you start the project, just click on Upload Model to GPU and turn on Active par
+
+## Portability:
+In any other project:
+* Add the TDPyEnvManager
+* Add the requirements.txt next to your .toe file
+* Add the TDDepthAnything COMP in your project
+* On the TDPyEnvManager, click on "Create from requirements.txt"
+* ... Follow previous install steps, or move checkpoints folder.
+
 
 ## Acknowledgement
 Based on the following projects:
