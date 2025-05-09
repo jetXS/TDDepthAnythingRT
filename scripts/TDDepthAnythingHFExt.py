@@ -33,23 +33,37 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 
+import gc
 import pathlib
+import threading
 import types
 from typing import Type
-import tensorrt as trt
-import torch
 import numpy as np
-import torchvision.transforms as transforms
-from TDDepthAnythingAccelerate import TDDepthAnythingAccelerate
+import logging
+logger = logging.getLogger('TDAppLogger')
 
-class DepthAnythingExt:
+try:
+	import tensorrt as trt
+	import torch
+	import torchvision.transforms as transforms
+except Exception as e:
+	logger.error(f'TDDepthAnythingHF - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
+	logger.error(f'TDDepthAnythingHF - {e}')
+	
+from TDDepthAnythingHFAccelerate import TDDepthAnythingHFAccelerate
+
+class TDDepthAnythingHFExt:
+	"""_summary_
+	"""
 	def __init__(self, ownerComp):
+		"""
+		"""
 		self.ownerComp = ownerComp
 		self.Logger = self.ownerComp.op('logger')
 		self.SafeLogger = self.Logger.Logger
 		self.ThreadManager = op.TDResources.ThreadManager
 
-		self.Accelerate = TDDepthAnythingAccelerate(
+		self.Accelerate = TDDepthAnythingHFAccelerate(
 			width=self.ownerComp.par.Resolutionw.eval(),
 			height=self.ownerComp.par.Resolutionh.eval(),
 			model_type=self.ownerComp.par.Modeltype.eval(),
@@ -61,6 +75,7 @@ class DepthAnythingExt:
 		self.device = "cuda"
 		self.trt_logger = trt.Logger(trt.Logger.INFO)
 		
+		self.EngineLock = threading.Lock()
 		self.engine = None
 		self.context = None
 		self.stream = None
@@ -72,23 +87,69 @@ class DepthAnythingExt:
 		self.to_tensor = None
 		self.normalize = None
 		self.scriptBuffer = op('script1')
+		
+
+	def onInitTD(self):
+		"""_summary_
+		"""
+		self.scriptBuffer.copyNumpyArray(
+			np.random.randint(
+				0, 
+				high=255, 
+				size=(
+					int(self.ownerComp.par.Resolutionh.eval()),
+					int(self.ownerComp.par.Resolutionw.eval()),
+					4
+				), 
+				dtype='uint16'
+			)
+		)
+
+	def _load_engine(self):
+		"""Load TensorRT engine."""
+		try:
+			TRTbin = self.trt_path
+			with open(TRTbin, 'rb') as f, trt.Runtime(self.trt_logger) as runtime:
+				return runtime.deserialize_cuda_engine(f.read())
+		except FileNotFoundError:
+			self.SafeLogger.error(f"TensorRT engine file not found: {TRTbin}")
+		except Exception as e:
+			self.SafeLogger.error(f"Failed to load TensorRT engine: {e}\n{traceback.format_exc()}")
+		return None
 
 	def setupTensor(self):
+		"""_summary_
+		"""
 		self.trt_input = torch.zeros((self.source.height, self.source.width), device=self.device)
 		self.trt_output = torch.zeros((self.source.height, self.source.width), device=self.device)
 		self.expanded_output = torch.zeros((4, self.source.height, self.source.width), device=self.device, dtype=self.trt_output.dtype)
 		self.to_tensor = TopArrayInterface(self.source)
 		self.normalize = transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))
 		return
+			
+	def run(self):
+		"""_summary_
+		"""
+		with self.EngineLock:
+			if self.ownerComp.par.Active.eval() and self.engine and hasattr(self.stream, 'cuda_stream'):
+				self._prepare_input_tensor()
+				self._run_inference(self.trt_input, self.trt_output)
+				self._process_output_tensor()
 
-	def _load_engine(self):
-		"""Load TensorRT engine."""
-		TRTbin = self.trt_path
-		with open(TRTbin, 'rb') as f, trt.Runtime(self.trt_logger) as runtime:
-			return runtime.deserialize_cuda_engine(f.read())
-	
-	def infer(self, img, output):
-		"""Run inference on TensorRT engine."""
+	def _prepare_input_tensor(self):
+		"""_summary_
+		"""
+		self.to_tensor.update(self.stream.cuda_stream)
+		self.trt_input = torch.as_tensor(self.to_tensor, device=self.device)
+		self.trt_input = self.normalize(self.trt_input[1:, :, :]).ravel()
+
+	def _run_inference(self, img, output):
+		"""_summary_
+
+		Args:
+			img (_type_): _description_
+			output (_type_): _description_
+		"""
 		self.bindings = [img.data_ptr()] + [output.data_ptr()]
 
 		for i in range(self.engine.num_io_tensors):
@@ -98,39 +159,34 @@ class DepthAnythingExt:
 		self.context.execute_async_v3(stream_handle=self.stream.cuda_stream)
 
 		self.stream.synchronize()
-			
-	def run(self):
-		if self.ownerComp.par.Active.eval() and self.engine:
-			self.to_tensor.update(self.stream.cuda_stream)
-			self.trt_input = torch.as_tensor(self.to_tensor, device=self.device)
-			self.trt_input = self.normalize(self.trt_input[1:, :, :]).ravel()
 
-			self.infer(self.trt_input, self.trt_output)
-			
-			if self.ownerComp.par.Normalize == 'normal':
-				tensor_min = self.trt_output.min()
-				tensor_max = self.trt_output.max()
-				self.trt_output = (self.trt_output - tensor_min) / (tensor_max - tensor_min)
+	def _process_output_tensor(self):
+		"""
+		"""
+		if self.ownerComp.par.Normalize == 'normal':
+			tensor_min = self.trt_output.min()
+			tensor_max = self.trt_output.max()
+			self.trt_output = (self.trt_output - tensor_min) / (tensor_max - tensor_min)
 
-			output = TopCUDAInterface(
-				self.source.width,
-				self.source.height,				
-				1,
-				np.float32
-			)
-			
-			self.expanded_output[0, :, :] = self.trt_output
-
-			self.scriptBuffer.copyCUDAMemory(self.expanded_output.data_ptr(), output.size, output.mem_shape)
-
+		self.expanded_output[0, :, :] = self.trt_output
+		output = TopCUDAInterface(
+			self.source.width,
+			self.source.height,
+			4,
+			np.float32
+		)
+		interleaved_output = self.expanded_output.permute(1, 2, 0).contiguous()
+		self.scriptBuffer.copyCUDAMemory(interleaved_output.contiguous().data_ptr(), output.size, output.mem_shape)
+	
 	"""
 	Setup methods
 	"""
 	def LoadModelThreaded(self):
+		"""_summary_
+		"""
 		myThread = self.ThreadManager.TDTask(
 				target=self.Accelerate.load_model,
 				SuccessHook=self.LoadModelSuccess,
-				ExceptHook=self.LoadModelExcept,
 				RefreshHook=self.LoadModelRefresh
 			)
 		self.ThreadManager.EnqueueTask(myThread)		
@@ -141,23 +197,17 @@ class DepthAnythingExt:
 		self.Logger.Info(f'Model loaded successfully.')
 		return
 	
-	def LoadModelExcept(self, *args: tuple[Type[BaseException], BaseException, types.TracebackType]):
-		self.Logger.Error(f'An error occured when trying to load the model from HuggingFace. {args}')
-		# Extract the traceback object
-		exc_type, exc_value, tb = args[0]
-		formatted_tb = traceback.format_tb(tb)
-		self.Logger.Error("".join(formatted_tb))		
-	
 	def LoadModelRefresh(self):
 		self.Logger.Info(f'Loading model from HuggingFace.')
 		return
 	
 	def AccelerateModelThreaded(self):
+		"""_summary_
+		"""
 		if self.Accelerate.model:
 			myThread = self.ThreadManager.TDTask(
 					target=self.Accelerate.accelerate,
 					SuccessHook=self.AccelerateModelSuccess,
-					ExceptHook=self.AccelerateModelExcept,
 					RefreshHook=self.AccelerateModelRefresh
 				)
 			self.ThreadManager.EnqueueTask(myThread)
@@ -170,51 +220,125 @@ class DepthAnythingExt:
 	def AccelerateModelSuccess(self):
 		self.Logger.Info(f'Model accelerated successfully.')
 		return
-	
-	def AccelerateModelExcept(self, *args: tuple[Type[BaseException], BaseException, types.TracebackType]):
-		self.Logger.Error(f'An error occured when trying to accelerate the model. {args}')
-		# Extract the traceback object
-		exc_type, exc_value, tb = args[0]
-		formatted_tb = traceback.format_tb(tb)
-		self.Logger.Error("".join(formatted_tb))
 
 	def AccelerateModelRefresh(self):
-		self.Logger.Info(f'Accelerating model.')
+		self.Logger.Debug(f'Accelerating model.')
 		return
 	
 	def UploadModelToGPUThreaded(self):
+		"""_summary_
+		"""
 		myThread = self.ThreadManager.TDTask(
-				target=self.UplopadModelToGPU,
+				target=self.UploadModelToGPU,
 				SuccessHook=self.UploadModelToGPUSuccess,
-				ExceptHook=self.UploadModelToGPUExcept,
 				RefreshHook=self.UploadModelToGPURefresh
 		)
 		self.ThreadManager.EnqueueTask(myThread)
 
 		self.Logger.Info(f'Uploading model to GPU.')
 
-	def UplopadModelToGPU(self):
-		if pathlib.Path(self.trt_path).exists():
-			self.engine = self._load_engine()
-			self.context = self.engine.create_execution_context()
-			self.stream = torch.cuda.current_stream(device=self.device)		
+	def UploadModelToGPU(self):
+		"""_summary_
+		"""
+		with self.EngineLock:
+			if pathlib.Path(self.trt_path).exists():
+				self.SafeLogger.info(f"Loading TensorRT engine from: {self.trt_path}")
+				self.engine = self._load_engine()
+				if self.engine:
+					self.context = self.engine.create_execution_context()
+					self.stream = torch.cuda.current_stream(device=self.device)
+					self.SafeLogger.info("TensorRT engine loaded successfully.")
+				else:
+					self.SafeLogger.error("Failed to load TensorRT engine.")
+			else:
+				self.SafeLogger.error(f"TensorRT engine file does not exist: {self.trt_path}")
 		
 	def UploadModelToGPUSuccess(self):
+		"""_summary_
+		"""
 		self.Logger.Info(f'Model uploaded to GPU successfully.')
 		if self.ownerComp.par.Active.eval():
 			self.setupTensor()
 			self.Logger.Info('Active was on, setting up tensors.')
-		return
+		
+		self.ownerComp.par.Modelstatus = f'{pathlib.Path(self.trt_path).name} loaded.'
 
-	def UploadModelToGPUExcept(self, *args: tuple[Type[BaseException], BaseException, types.TracebackType]):
-		self.Logger.Error(f'An error occured when trying to upload the model to GPU. {args}')
-		# Extract the traceback object
-		exc_type, exc_value, tb = args[0]
-		formatted_tb = traceback.format_tb(tb)
-		self.Logger.Error("".join(formatted_tb))
+		return
 
 	def UploadModelToGPURefresh(self):
 		self.Logger.Info(f'Uploading model to GPU.')
+		return
+
+	def UnloadModelFromGPUThreaded(self):
+		"""_summary_
+		"""
+		if self.ownerComp.par.Active.eval():
+			self.ownerComp.par.Active = False
+			self.Logger.Info('Inference was turned off because the user requested to unload the model.')
+
+		myThread = self.ThreadManager.TDTask(
+				target=self.UnloadModelFromGPU,
+				SuccessHook=self.UnloadModelFromGPUSuccess,
+				RefreshHook=self.UnloadModelFromGPURefresh
+		)
+		self.ThreadManager.EnqueueTask(myThread)
+
+		self.Logger.Info(f'Unloading model from GPU.')		
+		return
+	
+	def UnloadModelFromGPU(self):
+		"""_summary_
+		"""
+		with self.EngineLock:
+			self.engine = None
+			self.context = None
+			self.stream = None
+			
+			self.Accelerate.free_acc_mem()
+
+		return
+	
+	def UnloadModelFromGPUSuccess(self):
+		self.ownerComp.par.Modelstatus = 'None'
+		self.Logger.Info('Accelerated model was unloaded from GPU.')
+		return
+
+	def UnloadModelFromGPURefresh(self):
+		self.Logger.Info(f'Unloading model to GPU.')
+		return	
+
+	def Reset(self):
+		"""
+		"""
+		with self.EngineLock:
+			self.engine = None
+			self.context = None
+			self.stream = None
+
+		self.trt_input = None
+		self.trt_output = None
+		self.expanded_output = None
+		self.to_tensor = None
+		self.normalize = None
+		
+		self.ownerComp.par.Active = False
+		self.ownerComp.par.Modelstatus = 'None'
+
+		self.scriptBuffer.copyNumpyArray(
+			np.random.randint(
+				0, 
+				high=255, 
+				size=(
+					int(self.ownerComp.par.Resolutionh.eval()),
+					int(self.ownerComp.par.Resolutionw.eval()),
+					4
+				), 
+				dtype='uint16'
+			)
+		)
+
+		gc.collect()
+		torch.cuda.empty_cache()	
 		return
 
 	"""
@@ -293,6 +417,12 @@ class DepthAnythingExt:
 				self.setupTensor()
 			else:
 				self.setupTensor()
+		else:
+			self.trt_input = None
+			self.trt_output = None
+			self.expanded_output = None
+			self.to_tensor = None
+			self.normalize = None
 
 		return
 	
@@ -341,6 +471,23 @@ class DepthAnythingExt:
 		self.UploadModelToGPUThreaded()
 		return
 
+	def OnPulseUnloadmodelfromgpu(self, par):
+		"""
+		When pressing the unload model from GPU button, we need to:
+		- Unload the accelerated model from the GPU in a threaded method
+
+		Args:
+			par (_type_): _description_
+		"""
+		self.UnloadModelFromGPUThreaded()
+
+	def OnPulseReset(self, par):
+		"""_summary_
+
+		Args:
+			par (_type_): _description_
+		"""
+		self.Reset()
 
 class TopCUDAInterface:
 	def __init__(self, width, height, num_comps, dtype):

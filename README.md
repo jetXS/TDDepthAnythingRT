@@ -1,9 +1,10 @@
 # TDPyEnvDepthAnything - an easier setup for DepthAnything with TensorRT
 
 TouchDesigner implementation for Depth Anything v2 with TensorRT, with the latest TouchDesigner tools
-- Using HuggingFace model
+- 🤗 HuggingFace model download and Transformers
 - Using TouchDesigner's TDPyEnvManager
 - Using TouchDesigner's ThreadManager
+- TouchDesigner 2023.30k+
 
 Original code by Oleg Chomp (@olegchomp) and update by JetXS (Michel Didier, Derivative)
 
