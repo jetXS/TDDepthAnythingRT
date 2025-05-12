@@ -33,6 +33,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
 
+from typing import Optional, Any
 import gc
 import pathlib
 import threading
@@ -53,10 +54,16 @@ except Exception as e:
 from TDDepthAnythingHFAccelerate import TDDepthAnythingHFAccelerate
 
 class TDDepthAnythingHFExt:
-	"""_summary_
 	"""
-	def __init__(self, ownerComp):
+	Main class for managing TensorRT-based depth estimation models in TouchDesigner.
+	"""
+
+	def __init__(self, ownerComp: Any) -> None:
 		"""
+		Initialize the extension with the owner component.
+
+		Args:
+			ownerComp (Any): The TouchDesigner component that owns this extension.
 		"""
 		self.ownerComp = ownerComp
 		self.Logger = self.ownerComp.op('logger')
@@ -70,46 +77,60 @@ class TDDepthAnythingHFExt:
 			checkpoints_dir=self.ownerComp.par.Checkpointsdir.eval(),
 		)
 
-		"""Initialize TensorRT plugins, engine and conetxt."""
-		self.trt_path = self.Accelerate.engine_path
-		self.device = "cuda"
-		self.trt_logger = trt.Logger(trt.Logger.INFO)
-		
-		self.EngineLock = threading.Lock()
-		self.engine = None
-		self.context = None
-		self.stream = None
-		
-		self.source = op('inputImage')
-		self.trt_input = None
-		self.trt_output = None
-		self.expanded_output = None
-		self.to_tensor = None
-		self.normalize = None
-		self.scriptBuffer = op('script1')
-		
+		# TensorRT-related attributes
+		self.trt_path: str = self.Accelerate.engine_path
+		self.device: str = "cuda"
+		self.EngineLock: threading.Lock = threading.Lock()
+		self.engine: Optional[trt.ICudaEngine] = None
+		self.context: Optional[trt.IExecutionContext] = None
+		self.stream: Optional[torch.cuda.Stream] = None
 
-	def onInitTD(self):
-		"""_summary_
+		# Input/output and processing attributes
+		self.source = op('inputImage')
+		self.trt_input: Optional[torch.Tensor] = None
+		self.trt_output: Optional[torch.Tensor] = None
+		self.to_tensor: Optional[Any] = None
+		self.normalize: Optional[transforms.Normalize] = None
+		self.scriptBuffer = op('script1')
+
+	def onInitTD(self) -> None:
+		"""
+		Initialize the TouchDesigner environment by populating the script buffer with random data.
 		"""
 		self.scriptBuffer.copyNumpyArray(
 			np.random.randint(
-				0, 
-				high=255, 
+				0,
+				high=255,
 				size=(
 					int(self.ownerComp.par.Resolutionh.eval()),
 					int(self.ownerComp.par.Resolutionw.eval()),
 					4
-				), 
-				dtype='uint16'
+				),
+				dtype=np.uint16
 			)
 		)
 
-	def _load_engine(self):
-		"""Load TensorRT engine."""
+	def onDelTD(self) -> None:
+		"""
+		Clean up resources when the extension is deleted.
+		"""
+		self.UnloadModelFromGPU()
+		self.trt_input = None
+		self.trt_output = None
+		self.to_tensor = None
+		self.normalize = None
+		self.Accelerate.free_acc_mem()
+
+	def _load_engine(self) -> Optional[trt.ICudaEngine]:
+		"""
+		Load the TensorRT engine from the specified path.
+
+		Returns:
+			Optional[trt.ICudaEngine]: The loaded TensorRT engine, or None if loading fails.
+		"""
 		try:
 			TRTbin = self.trt_path
-			with open(TRTbin, 'rb') as f, trt.Runtime(self.trt_logger) as runtime:
+			with open(TRTbin, 'rb') as f, trt.Runtime(trt.Logger(trt.Logger.INFO)) as runtime:
 				return runtime.deserialize_cuda_engine(f.read())
 		except FileNotFoundError:
 			self.SafeLogger.error(f"TensorRT engine file not found: {TRTbin}")
@@ -117,18 +138,18 @@ class TDDepthAnythingHFExt:
 			self.SafeLogger.error(f"Failed to load TensorRT engine: {e}\n{traceback.format_exc()}")
 		return None
 
-	def setupTensor(self):
-		"""_summary_
+	def setupTensor(self) -> None:
+		"""
+		Set up input and output tensors for inference.
 		"""
 		self.trt_input = torch.zeros((self.source.height, self.source.width), device=self.device)
 		self.trt_output = torch.zeros((self.source.height, self.source.width), device=self.device)
-		self.expanded_output = torch.zeros((4, self.source.height, self.source.width), device=self.device, dtype=self.trt_output.dtype)
-		self.to_tensor = TopArrayInterface(self.source)
-		self.normalize = transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))
-		return
-			
-	def run(self):
-		"""_summary_
+		self.to_tensor = TopArrayInterface(self.source, stream=self.stream.cuda_stream)
+		self.normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+
+	def run(self) -> None:
+		"""
+		Run the inference pipeline if the model is active and loaded.
 		"""
 		with self.EngineLock:
 			if self.ownerComp.par.Active.eval() and self.engine and hasattr(self.stream, 'cuda_stream'):
@@ -136,109 +157,137 @@ class TDDepthAnythingHFExt:
 				self._run_inference(self.trt_input, self.trt_output)
 				self._process_output_tensor()
 
-	def _prepare_input_tensor(self):
-		"""_summary_
+	def _prepare_input_tensor(self) -> None:
+		"""
+		Prepare the input tensor for inference by normalizing and reshaping it.
 		"""
 		self.to_tensor.update(self.stream.cuda_stream)
 		self.trt_input = torch.as_tensor(self.to_tensor, device=self.device)
 		self.trt_input = self.normalize(self.trt_input[1:, :, :]).ravel()
 
-	def _run_inference(self, img, output):
-		"""_summary_
+	def _run_inference(self, img: torch.Tensor, output: torch.Tensor) -> None:
+		"""
+		Run inference on the input tensor.
 
 		Args:
-			img (_type_): _description_
-			output (_type_): _description_
+			img (torch.Tensor): The input tensor.
+			output (torch.Tensor): The output tensor to store inference results.
 		"""
 		self.bindings = [img.data_ptr()] + [output.data_ptr()]
-
 		for i in range(self.engine.num_io_tensors):
 			self.context.set_tensor_address(self.engine.get_tensor_name(i), self.bindings[i])
 
 		# Run inference
 		self.context.execute_async_v3(stream_handle=self.stream.cuda_stream)
-
 		self.stream.synchronize()
 
-	def _process_output_tensor(self):
+	def _process_output_tensor(self) -> None:
 		"""
+		Process the output tensor and convert it to RGBA format.
 		"""
 		if self.ownerComp.par.Normalize == 'normal':
 			tensor_min = self.trt_output.min()
 			tensor_max = self.trt_output.max()
 			self.trt_output = (self.trt_output - tensor_min) / (tensor_max - tensor_min)
 
-		self.expanded_output[0, :, :] = self.trt_output
+		rgba_tensor = torch.zeros((4, self.trt_output.shape[0], self.trt_output.shape[1]), device=self.device, dtype=self.trt_output.dtype)
+		rgba_tensor[0, :, :] = self.trt_output
+
 		output = TopCUDAInterface(
 			self.source.width,
 			self.source.height,
 			4,
 			np.float32
 		)
-		interleaved_output = self.expanded_output.permute(1, 2, 0).contiguous()
-		self.scriptBuffer.copyCUDAMemory(interleaved_output.contiguous().data_ptr(), output.size, output.mem_shape)
+		self.scriptBuffer.copyCUDAMemory(rgba_tensor.permute(1, 2, 0).contiguous().data_ptr(), output.size, output.mem_shape, stream=self.stream.cuda_stream)
+
 	
 	"""
 	Setup methods
 	"""
-	def LoadModelThreaded(self):
-		"""_summary_
+	def LoadModelThreaded(self) -> None:
+		"""
+		Start a threaded task to load the model from HuggingFace.
+
+		This method enqueues a task to download and load the model in a separate thread.
 		"""
 		myThread = self.ThreadManager.TDTask(
-				target=self.Accelerate.load_model,
-				SuccessHook=self.LoadModelSuccess,
-				RefreshHook=self.LoadModelRefresh
-			)
-		self.ThreadManager.EnqueueTask(myThread)		
+			target=self.Accelerate.load_model,
+			SuccessHook=self.LoadModelSuccess,
+			RefreshHook=self.LoadModelRefresh
+		)
+		self.ThreadManager.EnqueueTask(myThread)
+		self.Logger.Info('Loading model from HuggingFace.')
 
-		self.Logger.Info(f'Loading model from HuggingFace.')
+	def LoadModelSuccess(self) -> None:
+		"""
+		Callback executed when the model is successfully loaded.
 
-	def LoadModelSuccess(self):
-		self.Logger.Info(f'Model loaded successfully.')
-		return
+		Updates the logger to indicate success.
+		"""
+		self.Logger.Info('Model loaded successfully.')
 	
-	def LoadModelRefresh(self):
-		self.Logger.Info(f'Loading model from HuggingFace.')
-		return
+	def LoadModelRefresh(self) -> None:
+		"""
+		Refresh callback executed during the model loading process.
+
+		Updates the logger to indicate progress.
+		"""
+		self.Logger.Info('Loading model from HuggingFace.')
 	
-	def AccelerateModelThreaded(self):
-		"""_summary_
+	def AccelerateModelThreaded(self) -> None:
+		"""
+		Start a threaded task to accelerate the model.
+
+		This method enqueues a task to accelerate the model using TensorRT in a separate thread.
 		"""
 		if self.Accelerate.model:
 			myThread = self.ThreadManager.TDTask(
-					target=self.Accelerate.accelerate,
-					SuccessHook=self.AccelerateModelSuccess,
-					RefreshHook=self.AccelerateModelRefresh
-				)
+				target=self.Accelerate.accelerate,
+				SuccessHook=self.AccelerateModelSuccess,
+				RefreshHook=self.AccelerateModelRefresh
+			)
 			self.ThreadManager.EnqueueTask(myThread)
-			self.Logger.Info(f'Accelerating model.')
-		
+			self.Logger.Info('Accelerating model.')
 		else:
-			self.Logger.Error('The model was not downloaded or was not loaded to be used for acceleration. Click "Download Model" first.')
+			self.Logger.Error('The model was not downloaded or loaded. Click "Download Model" first.')
 
 
-	def AccelerateModelSuccess(self):
-		self.Logger.Info(f'Model accelerated successfully.')
-		return
+	def AccelerateModelSuccess(self) -> None:
+		"""
+		Callback executed when the model is successfully accelerated.
 
-	def AccelerateModelRefresh(self):
-		self.Logger.Debug(f'Accelerating model.')
-		return
+		Updates the logger to indicate success.
+		"""
+		self.Logger.Info('Model accelerated successfully.')
+
+	def AccelerateModelRefresh(self) -> None:
+		"""
+		Refresh callback executed during the model acceleration process.
+
+		Updates the logger to indicate progress.
+		"""
+		self.Logger.Debug('Accelerating model.')
 	
-	def UploadModelToGPUThreaded(self):
-		"""_summary_
+	def UploadModelToGPUThreaded(self) -> None:
+		"""
+		Start a threaded task to upload the accelerated model to the GPU.
+
+		This method enqueues a task to load the TensorRT engine and upload it to the GPU in a separate thread.
 		"""
 		myThread = self.ThreadManager.TDTask(
-				target=self.UploadModelToGPU,
-				SuccessHook=self.UploadModelToGPUSuccess,
-				RefreshHook=self.UploadModelToGPURefresh
+			target=self.UploadModelToGPU,
+			SuccessHook=self.UploadModelToGPUSuccess,
+			RefreshHook=self.UploadModelToGPURefresh
 		)
 		self.ThreadManager.EnqueueTask(myThread)
+		self.Logger.Info('Uploading model to GPU.')
 
-		self.Logger.Info(f'Uploading model to GPU.')
+	def UploadModelToGPU(self) -> None:
+		"""
+		Upload the accelerated model to the GPU.
 
-	def UploadModelToGPU(self):
-		"""_summary_
+		Loads the TensorRT engine from the specified path and creates the execution context and CUDA stream.
 		"""
 		with self.EngineLock:
 			if pathlib.Path(self.trt_path).exists():
@@ -246,249 +295,231 @@ class TDDepthAnythingHFExt:
 				self.engine = self._load_engine()
 				if self.engine:
 					self.context = self.engine.create_execution_context()
-					self.stream = torch.cuda.current_stream(device=self.device)
+					self.stream = torch.cuda.Stream(device=self.device)
 					self.SafeLogger.info("TensorRT engine loaded successfully.")
 				else:
 					self.SafeLogger.error("Failed to load TensorRT engine.")
 			else:
 				self.SafeLogger.error(f"TensorRT engine file does not exist: {self.trt_path}")
 		
-	def UploadModelToGPUSuccess(self):
-		"""_summary_
+	def UploadModelToGPUSuccess(self) -> None:
 		"""
-		self.Logger.Info(f'Model uploaded to GPU successfully.')
+		Callback executed when the model is successfully uploaded to the GPU.
+
+		Updates the logger and sets up tensors if the model is active.
+		"""
+		self.Logger.Info('Model uploaded to GPU successfully.')
 		if self.ownerComp.par.Active.eval():
 			self.setupTensor()
 			self.Logger.Info('Active was on, setting up tensors.')
-		
 		self.ownerComp.par.Modelstatus = f'{pathlib.Path(self.trt_path).name} loaded.'
 
-		return
+	def UploadModelToGPURefresh(self) -> None:
+		"""
+		Refresh callback executed during the model upload process.
 
-	def UploadModelToGPURefresh(self):
-		self.Logger.Info(f'Uploading model to GPU.')
-		return
+		Updates the logger to indicate progress.
+		"""
+		self.Logger.Info('Uploading model to GPU.')
 
-	def UnloadModelFromGPUThreaded(self):
-		"""_summary_
+	def UnloadModelFromGPUThreaded(self) -> None:
+		"""
+		Start a threaded task to unload the model from the GPU.
+
+		This method enqueues a task to release the TensorRT engine and associated resources in a separate thread.
 		"""
 		if self.ownerComp.par.Active.eval():
 			self.ownerComp.par.Active = False
 			self.Logger.Info('Inference was turned off because the user requested to unload the model.')
 
 		myThread = self.ThreadManager.TDTask(
-				target=self.UnloadModelFromGPU,
-				SuccessHook=self.UnloadModelFromGPUSuccess,
-				RefreshHook=self.UnloadModelFromGPURefresh
+			target=self.UnloadModelFromGPU,
+			SuccessHook=self.UnloadModelFromGPUSuccess,
+			RefreshHook=self.UnloadModelFromGPURefresh
 		)
 		self.ThreadManager.EnqueueTask(myThread)
-
-		self.Logger.Info(f'Unloading model from GPU.')		
-		return
+		self.Logger.Info('Unloading model from GPU.')
 	
-	def UnloadModelFromGPU(self):
-		"""_summary_
+	def UnloadModelFromGPU(self) -> None:
+		"""
+		Unload the TensorRT model from the GPU and release associated resources.
 		"""
 		with self.EngineLock:
 			self.engine = None
 			self.context = None
+			if self.stream:
+				self.stream.synchronize()
 			self.stream = None
-			
 			self.Accelerate.free_acc_mem()
-
-		return
 	
-	def UnloadModelFromGPUSuccess(self):
+	def UnloadModelFromGPUSuccess(self) -> None:
+		"""
+		Callback for when the model is successfully unloaded from the GPU.
+		"""
 		self.ownerComp.par.Modelstatus = 'None'
 		self.Logger.Info('Accelerated model was unloaded from GPU.')
-		return
 
-	def UnloadModelFromGPURefresh(self):
-		self.Logger.Info(f'Unloading model to GPU.')
-		return	
-
-	def Reset(self):
+	def UnloadModelFromGPURefresh(self) -> None:
 		"""
+		Refresh callback for unloading the model from the GPU.
+		"""
+		self.Logger.Info('Unloading model from GPU.')
+
+	def Reset(self) -> None:
+		"""
+		Reset the extension by clearing all resources, tensors, and GPU memory.
 		"""
 		with self.EngineLock:
 			self.engine = None
 			self.context = None
+			if self.stream:
+				self.stream.synchronize()
 			self.stream = None
 
 		self.trt_input = None
 		self.trt_output = None
-		self.expanded_output = None
 		self.to_tensor = None
 		self.normalize = None
-		
+
 		self.ownerComp.par.Active = False
 		self.ownerComp.par.Modelstatus = 'None'
 
 		self.scriptBuffer.copyNumpyArray(
 			np.random.randint(
-				0, 
-				high=255, 
+				0,
+				high=255,
 				size=(
 					int(self.ownerComp.par.Resolutionh.eval()),
 					int(self.ownerComp.par.Resolutionw.eval()),
 					4
-				), 
-				dtype='uint16'
+				),
+				dtype=np.uint16
 			)
 		)
 
 		gc.collect()
-		torch.cuda.empty_cache()	
-		return
+		torch.cuda.empty_cache()
 
 	"""
 	Parameters Handlers
 	"""
-	def OnValueChangeModeltype(self, par, prev):
+	def OnValueChangeModeltype(self, par: Any, prev: Any) -> None:
 		"""
-		When changing the model type, and if the model is not accelerated yet, we need to:
-		- Update the model complete name
-		- Update the model path
-		- Update the ONNX path
-		- Update the engine path
+		Handle changes to the model type parameter.
 
 		Args:
-			par (_type_): _description_
-			prev (_type_): _description_
+			par (Any): The parameter that changed.
+			prev (Any): The previous value of the parameter.
 		"""
 		self.Accelerate.model_type = par.eval()
-		return
 	
-	def OnValueChangeResolutionw(self, par, prev):
+	def OnValueChangeResolutionw(self, par: Any, prev: Any) -> None:
 		"""
-		When changing the resolution width, and if the model is not accelerated yet, we need to:
-		- Update the image shape
-		- Update the ONNX path
-		- Update the engine path
+		Handle changes to the resolution width parameter.
 
 		Args:
-			par (_type_): _description_
-			prev (_type_): _description_
+			par (Any): The parameter that changed.
+			prev (Any): The previous value of the parameter.
 		"""
 		self.Accelerate.width = par.eval()
-		return
-	
-	def OnValueChangeResolutionh(self, par, prev):
+		
+	def OnValueChangeResolutionh(self, par: Any, prev: Any) -> None:
 		"""
-		When changing the resolution height, and if the model is not accelerated yet, we need to:
-		- Update the image shape
-		- Update the ONNX path
-		- Update the engine path
+		Handle changes to the resolution height parameter.
 
 		Args:
-			par (_type_): _description_
-			prev (_type_): _description_
+			par (Any): The parameter that changed.
+			prev (Any): The previous value of the parameter.
 		"""
 		self.Accelerate.height = par.eval()
-		return
 	
-	def OnValueChangeCheckpointdir(self, par, prev):
+	def OnValueChangeCheckpointdir(self, par: Any, prev: Any) -> None:
 		"""
-		When changing the checkpoint directory, and if the model is not accelerated yet, we need to:
-		- Update the checkpoint directory
-		- Update the ONNX path
-		- Update the engine path
+		Handle changes to the checkpoint directory parameter.
 
 		Args:
-			par (_type_): _description_
-			prev (_type_): _description_
+			par (Any): The parameter that changed.
+			prev (Any): The previous value of the parameter.
 		"""
 		self.Accelerate.checkpoints_dir = par.eval()
-		return
-	
-	def OnValueChangeActive(self, par, prev):
+		
+	def OnValueChangeActive(self, par: Any, prev: Any) -> None:
 		"""
-		When changing the active parameter, we need to:
-		- Check that the accelerated model was loaded
-		- Setup tensor for inference
+		Handle changes to the active parameter.
 
 		Args:
-			par (_type_): _description_
-			prev (_type_): _description_
+			par (Any): The parameter that changed.
+			prev (Any): The previous value of the parameter.
 		"""
 		if par.eval():
 			if self.engine is None:
 				self.UploadModelToGPUThreaded()
-				self.setupTensor()
 			else:
 				self.setupTensor()
 		else:
 			self.trt_input = None
 			self.trt_output = None
-			self.expanded_output = None
 			self.to_tensor = None
 			self.normalize = None
-
-		return
 	
-	def OnValueChangeNormalize(self, par, prev):
+	def OnValueChangeNormalize(self, par: Any, prev: Any) -> None:
 		"""
-		When changing the normalize parameter, we need to:
-		- None
+		Handle changes to the normalize parameter.
 
 		Args:
-			par (_type_): _description_
-			prev (_type_): _description_
+			par (Any): The parameter that changed.
+			prev (Any): The previous value of the parameter.
 		"""
-		return
+		pass
 	
-	def OnPulseDownloadmodel(self, par):
+	def OnPulseDownloadmodel(self, par: Any) -> None:
 		"""
-		When pressing the download model button, we need to:
-		- Download the model from HuggingFace in a a threaded method
+		Handle the pulse to download the model.
 
 		Args:
-			par (_type_): _description_
+			par (Any): The parameter that triggered the pulse.
 		"""
 		self.LoadModelThreaded()
-		return
 	
-	def OnPulseAccelerate(self, par):
+	def OnPulseAccelerate(self, par: Any) -> None:
 		"""
-		When pressing the accelerate model button, we need to:
-		- Check that the model is not already accelerated
-		- Accelerate the model using the TDDepthAnythingAccelerate class, in a threaded method
+		Handle the pulse to accelerate the model.
 
 		Args:
-			par (_type_): _description_
+			par (Any): The parameter that triggered the pulse.
 		"""
 		self.AccelerateModelThreaded()
-		return
 	
-	def OnPulseUploadmodeltogpu(self, par):
+	def OnPulseUploadmodeltogpu(self, par: Any) -> None:
 		"""
-		When pressing the upload model to GPU button, we need to:
-		- Upload the accelerated model to GPU in a threaded method
+		Handle the pulse to upload the model to the GPU.
 
 		Args:
-			par (_type_): _description_
+			par (Any): The parameter that triggered the pulse.
 		"""
 		self.UploadModelToGPUThreaded()
-		return
 
-	def OnPulseUnloadmodelfromgpu(self, par):
+	def OnPulseUnloadmodelfromgpu(self, par: Any) -> None:
 		"""
-		When pressing the unload model from GPU button, we need to:
-		- Unload the accelerated model from the GPU in a threaded method
+		Handle the pulse to unload the model from the GPU.
 
 		Args:
-			par (_type_): _description_
+			par (Any): The parameter that triggered the pulse.
 		"""
 		self.UnloadModelFromGPUThreaded()
 
-	def OnPulseReset(self, par):
-		"""_summary_
+	def OnPulseReset(self, par: Any) -> None:
+		"""
+		Handle the pulse to reset the extension.
 
 		Args:
-			par (_type_): _description_
+			par (Any): The parameter that triggered the pulse.
 		"""
 		self.Reset()
 
+"""
+TopArray from IntentDev - License for https://github.com/IntentDev/TopArray
+"""
 class TopCUDAInterface:
 	def __init__(self, width, height, num_comps, dtype):
 		self.mem_shape = CUDAMemoryShape()
