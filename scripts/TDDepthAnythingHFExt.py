@@ -143,17 +143,18 @@ class TDDepthAnythingHFExt:
 		"""
 		Set up input and output tensors for inference.
 		"""
-		self.trt_input = torch.zeros((self.source.height, self.source.width), device=self.device)
-		self.trt_output = torch.zeros((self.source.height, self.source.width), device=self.device)
-		self.to_tensor = TopArrayInterface(self.source, self.stream.cuda_stream)
-		self.normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+		with self.stream:
+			self.trt_input = torch.zeros((self.source.height, self.source.width), device=self.device)
+			self.trt_output = torch.zeros((self.source.height, self.source.width), device=self.device)
+			self.to_tensor = TopArrayInterface(self.source, self.stream.cuda_stream)
+			self.normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
 	def run(self) -> None:
 		"""
 		Run the inference pipeline if the model is active and loaded.
 		"""
 		with self.EngineLock:
-			if self.ownerComp.par.Active.eval() and self.engine and hasattr(self.stream, 'cuda_stream'):
+			if self.ownerComp.par.Active.eval() and self.engine and hasattr(self.stream, 'cuda_stream') and self.to_tensor:
 				self._prepare_input_tensor()
 				self._run_inference(self.trt_input, self.trt_output)
 				self._process_output_tensor()
@@ -162,9 +163,10 @@ class TDDepthAnythingHFExt:
 		"""
 		Prepare the input tensor for inference by normalizing and reshaping it.
 		"""
-		self.to_tensor.update(self.stream.cuda_stream)
-		self.trt_input = torch.as_tensor(self.to_tensor, device=self.device)
-		self.trt_input = self.normalize(self.trt_input[1:, :, :]).ravel()
+		with self.stream:
+			self.to_tensor.update(self.stream.cuda_stream)
+			self.trt_input = torch.as_tensor(self.to_tensor, device=self.device)
+			self.trt_input = self.normalize(self.trt_input[1:, :, :]).ravel()
 
 	def _run_inference(self, img: torch.Tensor, output: torch.Tensor) -> None:
 		"""
@@ -179,28 +181,31 @@ class TDDepthAnythingHFExt:
 			self.context.set_tensor_address(self.engine.get_tensor_name(i), self.bindings[i])
 
 		# Run inference
-		self.context.execute_async_v3(stream_handle=self.stream.cuda_stream)
-		self.stream.synchronize()
+		with self.stream:
+			self.context.execute_async_v3(stream_handle=self.stream.cuda_stream)
+			self.stream.synchronize()
 
 	def _process_output_tensor(self) -> None:
 		"""
 		Process the output tensor and convert it to RGBA format.
 		"""
-		if self.ownerComp.par.Normalize == 'normal':
-			tensor_min = self.trt_output.min()
-			tensor_max = self.trt_output.max()
-			self.trt_output = (self.trt_output - tensor_min) / (tensor_max - tensor_min)
+		with self.stream:
+			if self.ownerComp.par.Normalize == 'normal':
+				tensor_min = self.trt_output.min()
+				tensor_max = self.trt_output.max()
+				self.trt_output = (self.trt_output - tensor_min) / (tensor_max - tensor_min)
 
-		rgba_tensor = torch.zeros((4, self.trt_output.shape[0], self.trt_output.shape[1]), device=self.device, dtype=self.trt_output.dtype)
-		rgba_tensor[0, :, :] = self.trt_output
+			rgba_tensor = torch.zeros((4, self.trt_output.shape[0], self.trt_output.shape[1]), device=self.device, dtype=self.trt_output.dtype)
+			rgba_tensor[0, :, :] = self.trt_output
 
-		output = TopCUDAInterface(
-			self.source.width,
-			self.source.height,
-			4,
-			np.float32
-		)
-		self.scriptBuffer.copyCUDAMemory(rgba_tensor.permute(1, 2, 0).contiguous().data_ptr(), output.size, output.mem_shape, stream=self.stream.cuda_stream)
+
+			output = TopCUDAInterface(
+				self.source.width,
+				self.source.height,
+				4,
+				np.float32
+			)
+			self.scriptBuffer.copyCUDAMemory(rgba_tensor.permute(1, 2, 0).contiguous().data_ptr(), output.size, output.mem_shape, stream=self.stream.cuda_stream)
 
 	
 	"""
@@ -296,7 +301,7 @@ class TDDepthAnythingHFExt:
 				self.engine = self._load_engine()
 				if self.engine:
 					self.context = self.engine.create_execution_context()
-					self.stream = torch.cuda.current_stream(device=self.device)
+					self.stream = torch.cuda.Stream(device=self.device)
 					self.SafeLogger.info("TensorRT engine loaded successfully.")
 				else:
 					self.SafeLogger.error("Failed to load TensorRT engine.")
@@ -532,9 +537,9 @@ class TopCUDAInterface:
 		self.size = width * height * num_comps * self.bytes_per_comp
 
 class TopArrayInterface:
-	def __init__(self, top, stream):
+	def __init__(self, top, streamHandleID):
 		self.top = top
-		mem = top.cudaMemory(stream=stream)
+		mem = top.cudaMemory(stream=streamHandleID)
 		self.w, self.h = mem.shape.width, mem.shape.height
 		self.num_comps = mem.shape.numComps
 		self.dtype = mem.shape.dataType
@@ -549,13 +554,13 @@ class TopArrayInterface:
 			"shape": shape,
 			"typestr": dtype_descr[0][1],
 			"descr": dtype_descr,
-			"stream": stream,
+			"stream": streamHandleID,
 			"strides": (num_bytes, num_bytes_px * self.w, num_bytes_px),
 			"data": (mem.ptr, False),
 		}
 
-	def update(self, stream):
-		mem = self.top.cudaMemory(stream=stream)
-		self.__cuda_array_interface__['stream'] = stream
+	def update(self, streamHandleID):
+		mem = self.top.cudaMemory(stream=streamHandleID)
+		self.__cuda_array_interface__['stream'] = streamHandleID
 		self.__cuda_array_interface__['data'] = (mem.ptr, False)
 		return
