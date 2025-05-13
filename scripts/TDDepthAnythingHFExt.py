@@ -66,6 +66,7 @@ class TDDepthAnythingHFExt:
 			ownerComp (Any): The TouchDesigner component that owns this extension.
 		"""
 		self.ownerComp = ownerComp
+		self.ownerComp.par.Modelstatus = 'None'
 		self.Logger = self.ownerComp.op('logger')
 		self.SafeLogger = self.Logger.Logger
 		self.ThreadManager = op.TDResources.ThreadManager
@@ -144,7 +145,7 @@ class TDDepthAnythingHFExt:
 		"""
 		self.trt_input = torch.zeros((self.source.height, self.source.width), device=self.device)
 		self.trt_output = torch.zeros((self.source.height, self.source.width), device=self.device)
-		self.to_tensor = TopArrayInterface(self.source, stream=self.stream.cuda_stream)
+		self.to_tensor = TopArrayInterface(self.source, self.stream.cuda_stream)
 		self.normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
 
 	def run(self) -> None:
@@ -295,7 +296,7 @@ class TDDepthAnythingHFExt:
 				self.engine = self._load_engine()
 				if self.engine:
 					self.context = self.engine.create_execution_context()
-					self.stream = torch.cuda.Stream(device=self.device)
+					self.stream = torch.cuda.current_stream(device=self.device)
 					self.SafeLogger.info("TensorRT engine loaded successfully.")
 				else:
 					self.SafeLogger.error("Failed to load TensorRT engine.")
@@ -531,7 +532,7 @@ class TopCUDAInterface:
 		self.size = width * height * num_comps * self.bytes_per_comp
 
 class TopArrayInterface:
-	def __init__(self, top, stream=0):
+	def __init__(self, top, stream):
 		self.top = top
 		mem = top.cudaMemory(stream=stream)
 		self.w, self.h = mem.shape.width, mem.shape.height
@@ -553,7 +554,7 @@ class TopArrayInterface:
 			"data": (mem.ptr, False),
 		}
 
-	def update(self, stream=0):
+	def update(self, stream):
 		mem = self.top.cudaMemory(stream=stream)
 		self.__cuda_array_interface__['stream'] = stream
 		self.__cuda_array_interface__['data'] = (mem.ptr, False)
