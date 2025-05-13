@@ -183,7 +183,6 @@ class TDDepthAnythingHFExt:
 		# Run inference
 		with self.stream:
 			self.context.execute_async_v3(stream_handle=self.stream.cuda_stream)
-			self.stream.synchronize()
 
 	def _process_output_tensor(self) -> None:
 		"""
