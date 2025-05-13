@@ -1,5 +1,7 @@
 # TDPyEnvDepthAnything - an easier setup for DepthAnything with TensorRT
 
+> ⚠️ This is an early release that will require TouchDesigner ("POPs Alpha") build 2023.32474+
+
 TouchDesigner implementation for Depth Anything v2 with TensorRT, with the latest TouchDesigner tools
 - 🤗 HuggingFace model download and Transformers
 - Using TouchDesigner's TDPyEnvManager
