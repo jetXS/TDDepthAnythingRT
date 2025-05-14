@@ -37,16 +37,19 @@ from typing import Optional, Any
 import gc
 import pathlib
 import threading
-import types
 from typing import Type
 import numpy as np
 import logging
-logger = logging.getLogger('TDAppLogger')
 
+logger = logging.getLogger('TDAppLogger')
 try:
 	import tensorrt as trt
 	import torch
 	import torchvision.transforms as transforms
+except ImportError as e:
+	logger.error(f'TDDepthAnythingHF - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
+	logger.error(f'TDDepthAnythingHF - {e}')
+	logger.error(f'TDDepthAnythingHF - If you are using a custom python environment, make sure that the following packages are installed: tensorrt, torch, torchvision')
 except Exception as e:
 	logger.error(f'TDDepthAnythingHF - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
 	logger.error(f'TDDepthAnythingHF - {e}')
