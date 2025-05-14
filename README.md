@@ -10,7 +10,7 @@ TouchDesigner implementation for Depth Anything v2 with TensorRT, with the lates
 
 Original code by Oleg Chomp (@olegchomp) and update by JetXS (Michel Didier, Derivative)
 
-![Screenshot_68](https://github.com/olegchomp/TDDepthAnything/assets/11017531/fa457aa2-d10a-4f54-a93a-27d672501f16)
+![header](assets/header.png)
 
 ## Features
 * One click install and run script
