@@ -47,16 +47,16 @@ try:
 	import torch
 	import torchvision.transforms as transforms
 except ImportError as e:
-	logger.error(f'TDDepthAnythingHF - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
-	logger.error(f'TDDepthAnythingHF - {e}')
-	logger.error(f'TDDepthAnythingHF - If you are using a custom python environment, make sure that the following packages are installed: tensorrt, torch, torchvision')
+	logger.error(f'TDDepthAnythingRT - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
+	logger.error(f'TDDepthAnythingRT - {e}')
+	logger.error(f'TDDepthAnythingRT - If you are using a custom python environment, make sure that the following packages are installed: tensorrt, torch, torchvision')
 except Exception as e:
-	logger.error(f'TDDepthAnythingHF - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
-	logger.error(f'TDDepthAnythingHF - {e}')
+	logger.error(f'TDDepthAnythingRT - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
+	logger.error(f'TDDepthAnythingRT - {e}')
 	
-from TDDepthAnythingHFAccelerate import TDDepthAnythingHFAccelerate
+from TDDepthAnythingRTAccelerate import TDDepthAnythingRTAccelerate
 
-class TDDepthAnythingHFExt:
+class TDDepthAnythingRTExt:
 	"""
 	Main class for managing TensorRT-based depth estimation models in TouchDesigner.
 	"""
@@ -74,7 +74,7 @@ class TDDepthAnythingHFExt:
 		self.SafeLogger = self.Logger.Logger
 		self.ThreadManager = op.TDResources.ThreadManager
 
-		self.Accelerate = TDDepthAnythingHFAccelerate(
+		self.Accelerate = TDDepthAnythingRTAccelerate(
 			width=self.ownerComp.par.Resolutionw.eval(),
 			height=self.ownerComp.par.Resolutionh.eval(),
 			model_type=self.ownerComp.par.Modeltype.eval(),

@@ -7,7 +7,7 @@ def onPreCook(changeOp):
 	return
 
 def onPostCook(changeOp):
-	ext.TDDepthAnythingHFExt.run()
+	ext.TDDepthAnythingRTExt.run()
 	return
 
 def onDestroy():

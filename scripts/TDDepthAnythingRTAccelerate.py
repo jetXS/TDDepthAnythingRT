@@ -20,10 +20,10 @@ try:
 	)
 
 except Exception as e:
-	logger.error(f'TDDepthAnythingHF - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
-	logger.error(f'TDDepthAnythingHF - {e}\n{traceback.format_exc()}')
+	logger.error(f'TDDepthAnythingRT - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
+	logger.error(f'TDDepthAnythingRT - {e}\n{traceback.format_exc()}')
 
-class TDDepthAnythingHFAccelerate:
+class TDDepthAnythingRTAccelerate:
 	"""_summary_
 	"""
 	def __init__(self, width: int=518, height: int=518, model_name:str='Depth-Anything-V2', model_type:str='Base', checkpoints_dir:str=f'{os.getcwd()}/checkpoints'):
