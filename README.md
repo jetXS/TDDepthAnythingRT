@@ -1,6 +1,6 @@
 # TDPyEnvDepthAnything - an easier setup for DepthAnything with TensorRT
 
-> ⚠️ This is an early release that will require TouchDesigner ("POPs Alpha") build 2023.32474+
+> ⚠️ This is release requires TouchDesigner Experimental build 2025.30000+
 
 TouchDesigner implementation for Depth Anything v2 with TensorRT, with the latest TouchDesigner tools
 - 🤗 HuggingFace model download and Transformers
@@ -8,21 +8,21 @@ TouchDesigner implementation for Depth Anything v2 with TensorRT, with the lates
 - Using TouchDesigner's ThreadManager
 - TouchDesigner 2023.30k+
 
-Original code by Oleg Chomp (@olegchomp) and update by JetXS (Michel Didier, Derivative)
+Original code by Oleg Chomp (@olegchomp) and updated by JetXS (Michel Didier, Derivative)
 
 ![header](assets/header.png)
 
 ## Features
-* One click install and run script
+* One-click install and run the script
 * In-TouchDesigner model download, acceleration and inference
   
 ## Usage
 Tested with TouchDesigner 2023.30k+
 
 ## Install:
-1. Open the project, open the textport if not opened
+1. Open the project, open the textport if it is not opened
 2. On the TDPyEnvManager, click on "Create from requirements.txt"
-3. Wait a bit while environment is being setup
+3. Wait a bit while the environment is being setup
 3. On TDDepthAnything, click Download Model
 5. Once done, click on Accelerate, this will take a few minutes, go get a cup of tea
 6. Once done, click on Upload Model to GPU
@@ -36,7 +36,7 @@ In any other project:
 * Add the requirements.txt next to your .toe file
 * Add the TDDepthAnything COMP in your project
 * On the TDPyEnvManager, click on "Create from requirements.txt"
-* ... Follow previous install steps, or move checkpoints folder.
+* ... Follow previous install steps, or move the checkpoints folder.
 
 
 ## Acknowledgement
