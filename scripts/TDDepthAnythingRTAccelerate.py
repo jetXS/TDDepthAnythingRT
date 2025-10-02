@@ -3,25 +3,20 @@ import os
 import pathlib
 import logging
 import traceback
-logger = logging.getLogger('TDAppLogger')
 
-try:
-	from transformers import AutoImageProcessor, AutoModelForDepthEstimation
-	import torch
-	import torch.onnx
-	import tensorrt as trt
+from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+import torch
+import torch.onnx
+import tensorrt as trt
+TRT_LOGGER = trt.Logger(trt.Logger.VERBOSE)
 
-	from polygraphy.backend.trt import (
-		CreateConfig,
-		Profile,
-		engine_from_network,
-		network_from_onnx_path,
-		save_engine,
-	)
-
-except Exception as e:
-	logger.error(f'TDDepthAnythingRT - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
-	logger.error(f'TDDepthAnythingRT - {e}\n{traceback.format_exc()}')
+from polygraphy.backend.trt import (
+	CreateConfig,
+	Profile,
+	engine_from_network,
+	network_from_onnx_path,
+	save_engine,
+)
 
 class TDDepthAnythingRTAccelerate:
 	"""_summary_
@@ -36,6 +31,11 @@ class TDDepthAnythingRTAccelerate:
 			model_type (str, optional): _description_. Defaults to 'Base'.
 			checkpoints_dir (str, optional): _description_. Defaults to f'{os.getcwd()}/checkpoints'.
 		"""
+		
+		self.logger:logging.Logger|None = None
+		self.logger = self.setupLogger()
+		self.logger.info("Logger initialized.")
+		
 		self._width = self.adjust_image_size(width)
 		self._height = self.adjust_image_size(height)
 		self.image_shape = (3, self.height, self.width)
@@ -49,6 +49,31 @@ class TDDepthAnythingRTAccelerate:
 		self.engine_path = f"{self.checkpoints_dir}/engines/{self.get_output_name()}.engine"
 		self.ensure_directories_exist()
 
+
+	def setupLogger(self) -> logging.Logger:
+		"""
+		Setup the logger for the class.
+
+		Returns:
+			logging.Logger: A logger instance to be used within the helper.
+		"""
+		isLoggingEnvVarPassed = True if 'TOUCH_APP_LOG_LEVEL' in os.environ.keys() else False
+		logLevel = os.environ['TOUCH_APP_LOG_LEVEL'] if isLoggingEnvVarPassed else 10
+
+		logger = logging.getLogger('TDAppLogger.TDDepthAnythingRTAccelerate')
+		logger.setLevel(logLevel)
+		# See if there is a streamhandler, otherwise, add one
+		# See if the parent exist, and only add an handler in that case, otherwise the
+		# logger will propagate to the root logger and a handler might already be available.
+		if not logger.hasHandlers():
+			myHandler = logging.StreamHandler()
+			myFormatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+			myHandler.setFormatter(myFormatter)
+			logger.addHandler(myHandler)
+		
+		logger.debug("Logger setup successfully")
+		return logger
+
 	def ensure_directories_exist(self):
 		"""
 		Ensure that the required directories for ONNX models and TensorRT engines exist.
@@ -60,11 +85,11 @@ class TDDepthAnythingRTAccelerate:
 		"""_summary_
 		"""
 		if torch.cuda.is_available() and torch.cuda.memory_allocated() > 0:
-			logger.info("Clearing GPU memory cache.")
+			self.logger.info("Clearing GPU memory cache.")
 			torch.cuda.empty_cache()
 
 		if gc.isenabled():
-			logger.info("Performing garbage collection.")
+			self.logger.info("Performing garbage collection.")
 			gc.collect()
 
 
@@ -170,7 +195,7 @@ class TDDepthAnythingRTAccelerate:
 		if image_size % patch_size != 0:
 			adjusted_size += patch_size
 
-		logger.info(f"Adjusted image size from {image_size} to {adjusted_size}")
+		self.logger.info(f"Adjusted image size from {image_size} to {adjusted_size}")
 		return int(adjusted_size)
 
 	def get_output_name(self):
@@ -185,12 +210,12 @@ class TDDepthAnythingRTAccelerate:
 		"""
 		Load the model using the specified model name and path.
 		"""
-		logger.info(f"Loading model: {self.model_name} from {self.model_path}")
+		self.logger.info(f"Loading model: {self.model_name} from {self.model_path}")
 		try:
 			self.model = AutoModelForDepthEstimation.from_pretrained(self.model_path, cache_dir=self.checkpoints_dir)
-			logger.info(f"Model loaded successfully.")
+			self.logger.info(f"Model loaded successfully.")
 		except Exception as e:
-			logger.error(f"Failed to load model: {e}\n{traceback.format_exc()}")
+			self.logger.error(f"Failed to load model: {e}\n{traceback.format_exc()}")
 			self.model = None
 
 	def unload_model(self):
@@ -205,7 +230,7 @@ class TDDepthAnythingRTAccelerate:
 		Args:
 			model (_type_, optional): _description_. Defaults to None.
 		"""
-		logger.info(f'Accelerating, image shape is {self.width}x{self.height}')
+		self.logger.info(f'Accelerating, image shape is {self.width}x{self.height}')
 		try:
 			if model is None:
 				model = self.model if self.model else self.load_model()
@@ -230,7 +255,7 @@ class TDDepthAnythingRTAccelerate:
 						verbose=True
 					)
 				del dummy_input
-				logger.info(f"Model exported to {self.onnx_path}")
+				self.logger.info(f"Model exported to {self.onnx_path}")
 
 			# Build TensorRT engine
 
@@ -238,12 +263,12 @@ class TDDepthAnythingRTAccelerate:
 				if not os.path.exists(os.path.dirname(self.engine_path)):
 					os.makedirs(os.path.dirname(self.engine_path), exist_ok=True)
 				
-				logger.info(f"Building TensorRT engine for {self.onnx_path}: {self.engine_path}")
+				self.logger.info(f"Building TensorRT engine for {self.onnx_path}: {self.engine_path}")
 				
 				p = Profile()
 				config_kwargs = {}
 
-				logger.info(f"Created engine profile.")
+				self.logger.info(f"Created engine profile.")
 
 				engine = engine_from_network(
 					network_from_onnx_path(self.onnx_path, flags=[trt.OnnxParserFlag.NATIVE_INSTANCENORM]),
@@ -253,11 +278,11 @@ class TDDepthAnythingRTAccelerate:
 					save_timing_cache=None,
 				)
 
-				logger.info(f"Built TensorRT engine from ONNX file.")
+				self.logger.info(f"Built TensorRT engine from ONNX file.")
 
 				save_engine(engine, path=self.engine_path)
 
-				logger.info(f"Saved TensorRT engine to file.")
+				self.logger.info(f"Saved TensorRT engine to file.")
 
 				# Clear memory after TensorRT engine creation
 				del engine
@@ -265,7 +290,7 @@ class TDDepthAnythingRTAccelerate:
 
 			self.free_acc_mem()
 
-			logger.info(f"Finished building TensorRT engine: {self.engine_path}")
+			self.logger.info(f"Finished building TensorRT engine: {self.engine_path}")
 
 		except Exception as e:
-			logger.error(f"Error during acceleration: {e}\n{traceback.format_exc()}")
+			self.logger.error(f"Error during acceleration: {e}\n{traceback.format_exc()}")

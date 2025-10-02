@@ -1,4 +1,4 @@
-tensorrt==10.13.2.6
+tensorrt-cu12
 --extra-index-url https://download.pytorch.org/whl/cu128
 torch
 torchaudio

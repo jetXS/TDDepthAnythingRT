@@ -2,14 +2,13 @@
 
 > ⚠️ This is release requires TouchDesigner Experimental build 2025.30000+
 >
-> ⚠️ ***09/30/2025*** TensorRT version > 10.13.0.35 seem to trigger an unexpected crash of TouchDesigner. 
-> The requirements.txt were updated to stick to 10.13.0.35 for now as we investigate the issue.
+> ⚠️ ***10/02/2025*** TensorRT version should now be the cu12 version. In requirements.txt file as `tensorrt-cu12`.
 
 TouchDesigner implementation for Depth Anything v2 with TensorRT, with the latest TouchDesigner tools
 - 🤗 HuggingFace model download and Transformers
 - Using TouchDesigner's TDPyEnvManager
 - Using TouchDesigner's ThreadManager
-- TouchDesigner 2023.30k+
+- TouchDesigner 2025.31120+
 
 Original code by Oleg Chomp (@olegchomp) and updated by JetXS (Michel Didier, Derivative)
 
@@ -20,8 +19,8 @@ Original code by Oleg Chomp (@olegchomp) and updated by JetXS (Michel Didier, De
 * In-TouchDesigner model download, acceleration and inference
   
 ## Usage
-Tested with TouchDesigner 2023.30k+
-TensorRT 10.13.0.35
+Tested with TouchDesigner 2025.31120+
+TensorRT-cu12
 
 ## Install:
 1. Open the project, open the textport if it is not opened
