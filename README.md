@@ -1,4 +1,4 @@
-# TDPyEnvDepthAnything - an easier setup for DepthAnything with TensorRT
+# TDDepthAnythingRT (with TDPyEnvManager) - an easier setup for DepthAnything with TensorRT
 
 > ⚠️ This is release requires TouchDesigner Experimental build 2025.30000+
 >
