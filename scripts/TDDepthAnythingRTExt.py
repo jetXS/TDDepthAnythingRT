@@ -42,18 +42,11 @@ import numpy as np
 import logging
 
 logger = logging.getLogger('TDAppLogger')
-try:
-	import tensorrt as trt
-	import torch
-	import torchvision.transforms as transforms
-except ImportError as e:
-	logger.error(f'TDDepthAnythingRT - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
-	logger.error(f'TDDepthAnythingRT - {e}')
-	logger.error(f'TDDepthAnythingRT - If you are using a custom python environment, make sure that the following packages are installed: tensorrt, torch, torchvision')
-except Exception as e:
-	logger.error(f'TDDepthAnythingRT - An error occured trying to import some of the required libraries. Make sure that the environment is setup properly.')
-	logger.error(f'TDDepthAnythingRT - {e}')
-	
+
+import tensorrt as trt
+import torch
+import torchvision.transforms as transforms
+
 from TDDepthAnythingRTAccelerate import TDDepthAnythingRTAccelerate
 
 class TDDepthAnythingRTExt:
