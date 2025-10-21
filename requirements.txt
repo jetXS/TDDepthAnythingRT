@@ -6,4 +6,6 @@ torchvision
 huggingface-hub
 polygraphy
 onnx
+onnxscript
 transformers
+
