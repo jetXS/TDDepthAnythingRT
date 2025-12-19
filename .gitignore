@@ -2,3 +2,4 @@ Backup/
 TDDepthAnythingRT.*.toe
 *.code-workspace
 TDPyEnvManagerContext.json
+.venv

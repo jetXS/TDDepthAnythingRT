@@ -198,6 +198,37 @@ class TDDepthAnythingRTAccelerate:
 		self.logger.info(f"Adjusted image size from {image_size} to {adjusted_size}")
 		return int(adjusted_size)
 
+	def get_cached_model_dir(self) -> pathlib.Path|None:
+		"""
+		Return the most recent local snapshot for the model if it exists.
+		"""
+		repo_dir = pathlib.Path(self.checkpoints_dir) / f"models--{self.model_path.replace('/', '--')}"
+		snapshot_root = repo_dir / "snapshots"
+		if snapshot_root.exists():
+			snapshots = [p for p in snapshot_root.iterdir() if p.is_dir()]
+			if snapshots:
+				return max(snapshots, key=lambda p: p.stat().st_mtime)
+		return None
+
+	def is_engine_built(self) -> bool:
+		"""Return True if the TensorRT engine already exists on disk."""
+		return pathlib.Path(self.engine_path).exists()
+
+	def validate_engine(self) -> bool:
+		"""
+		Try to deserialize the generated engine to ensure it is usable.
+		"""
+		engine_file = pathlib.Path(self.engine_path)
+		if not engine_file.exists() or engine_file.stat().st_size == 0:
+			return False
+		try:
+			with open(engine_file, 'rb') as f, trt.Runtime(TRT_LOGGER) as runtime:
+				engine = runtime.deserialize_cuda_engine(f.read())
+				return engine is not None
+		except Exception as e:
+			self.logger.error(f"Engine validation failed: {e}\n{traceback.format_exc()}")
+			return False
+
 	def get_output_name(self):
 		"""_summary_
 
@@ -210,13 +241,31 @@ class TDDepthAnythingRTAccelerate:
 		"""
 		Load the model using the specified model name and path.
 		"""
-		self.logger.info(f"Loading model: {self.model_name} from {self.model_path}")
+		if self.model is not None:
+			self.logger.info("Model already loaded in memory, skipping download.")
+			return self.model
+
+		cached_dir = self.get_cached_model_dir()
+		if cached_dir:
+			self.logger.info(f"Loading cached model from {cached_dir}")
+		else:
+			self.logger.info(f"Loading model: {self.model_name} from {self.model_path}")
+
 		try:
-			self.model = AutoModelForDepthEstimation.from_pretrained(self.model_path, cache_dir=self.checkpoints_dir)
+			if cached_dir:
+				self.model = AutoModelForDepthEstimation.from_pretrained(
+					cached_dir,
+					local_files_only=True,
+					cache_dir=self.checkpoints_dir
+				)
+			else:
+				self.model = AutoModelForDepthEstimation.from_pretrained(self.model_path, cache_dir=self.checkpoints_dir)
 			self.logger.info(f"Model loaded successfully.")
+			return self.model
 		except Exception as e:
 			self.logger.error(f"Failed to load model: {e}\n{traceback.format_exc()}")
 			self.model = None
+			return None
 
 	def unload_model(self):
 		"""_summary_
@@ -232,8 +281,20 @@ class TDDepthAnythingRTAccelerate:
 		"""
 		self.logger.info(f'Accelerating, image shape is {self.width}x{self.height}')
 		try:
+			if self.is_engine_built():
+				if self.validate_engine():
+					self.logger.info(f"Existing TensorRT engine found at {self.engine_path}; skipping acceleration.")
+					return
+				else:
+					self.logger.warning(f"Existing engine at {self.engine_path} is invalid; rebuilding.")
+					pathlib.Path(self.engine_path).unlink(missing_ok=True)
+
 			if model is None:
 				model = self.model if self.model else self.load_model()
+
+			if model is None:
+				self.logger.error("Model is not loaded; cannot accelerate.")
+				return
 
 			model.eval()
 
@@ -267,6 +328,9 @@ class TDDepthAnythingRTAccelerate:
 				
 				p = Profile()
 				config_kwargs = {}
+				# Static shape profile including batch dimension.
+				batch_input_shape = (1,) + self.image_shape  # (1,3,H,W)
+				p.add("input", min=batch_input_shape, opt=batch_input_shape, max=batch_input_shape)
 
 				self.logger.info(f"Created engine profile.")
 
@@ -289,6 +353,11 @@ class TDDepthAnythingRTAccelerate:
 				self.model = None
 
 			self.free_acc_mem()
+
+			if not self.validate_engine():
+				self.logger.error(f"Engine validation failed for {self.engine_path}; removing corrupted file.")
+				pathlib.Path(self.engine_path).unlink(missing_ok=True)
+				return
 
 			self.logger.info(f"Finished building TensorRT engine: {self.engine_path}")
 

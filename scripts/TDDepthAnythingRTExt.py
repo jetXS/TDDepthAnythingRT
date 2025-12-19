@@ -40,6 +40,7 @@ import threading
 from typing import Type
 import numpy as np
 import logging
+import traceback
 
 logger = logging.getLogger('TDAppLogger')
 
@@ -206,12 +207,26 @@ class TDDepthAnythingRTExt:
 	"""
 	Setup methods
 	"""
+	def refresh_engine_path(self) -> None:
+		"""Keep local TensorRT path in sync with accelerator settings."""
+		self.trt_path = self.Accelerate.engine_path
+
 	def LoadModelThreaded(self) -> None:
 		"""
 		Start a threaded task to load the model from HuggingFace.
 
 		This method enqueues a task to download and load the model in a separate thread.
 		"""
+		if self.Accelerate.model:
+			self.ownerComp.par.Modelstatus = f'{self.Accelerate.model_complete_name} already loaded.'
+			self.Logger.Info('Model already loaded; skipping download.')
+			return
+
+		cached_dir = self.Accelerate.get_cached_model_dir()
+		if cached_dir:
+			self.ownerComp.par.Modelstatus = f'{self.Accelerate.model_complete_name} cached.'
+			self.Logger.Info(f'Model already downloaded at {cached_dir}, loading from cache.')
+
 		myThread = self.ThreadManager.TDTask(
 			target=self.Accelerate.load_model,
 			SuccessHook=self.LoadModelSuccess,
@@ -227,6 +242,7 @@ class TDDepthAnythingRTExt:
 		Updates the logger to indicate success.
 		"""
 		self.Logger.Info('Model loaded successfully.')
+		self.ownerComp.par.Modelstatus = f'{self.Accelerate.model_complete_name} loaded.'
 	
 	def LoadModelRefresh(self) -> None:
 		"""
@@ -242,6 +258,17 @@ class TDDepthAnythingRTExt:
 
 		This method enqueues a task to accelerate the model using TensorRT in a separate thread.
 		"""
+		self.refresh_engine_path()
+		if self.Accelerate.is_engine_built():
+			self.ownerComp.par.Modelstatus = f'{pathlib.Path(self.trt_path).name} already built.'
+			self.Logger.Info(f'Existing TensorRT engine detected at {self.trt_path}; skipping acceleration.')
+			return
+
+		# Ensure a model is loaded (will pull from cache if available).
+		if self.Accelerate.model is None:
+			self.Logger.Info('Model not in memory; attempting to load (uses cache if present).')
+			self.Accelerate.load_model()
+
 		if self.Accelerate.model:
 			myThread = self.ThreadManager.TDTask(
 				target=self.Accelerate.accelerate,
@@ -251,7 +278,7 @@ class TDDepthAnythingRTExt:
 			self.ThreadManager.EnqueueTask(myThread)
 			self.Logger.Info('Accelerating model.')
 		else:
-			self.Logger.Error('The model was not downloaded or loaded. Click "Download Model" first.')
+			self.Logger.Error('The model could not be loaded. Click "Download Model" first or check the cache.')
 
 
 	def AccelerateModelSuccess(self) -> None:
@@ -260,7 +287,13 @@ class TDDepthAnythingRTExt:
 
 		Updates the logger to indicate success.
 		"""
-		self.Logger.Info('Model accelerated successfully.')
+		self.refresh_engine_path()
+		if self.Accelerate.is_engine_built() and self.Accelerate.validate_engine():
+			self.Logger.Info('Model accelerated successfully.')
+			self.ownerComp.par.Modelstatus = f'{pathlib.Path(self.trt_path).name} built.'
+		else:
+			self.Logger.Error('Acceleration reported success but the engine is missing or invalid.')
+			self.ownerComp.par.Modelstatus = 'Acceleration failed.'
 
 	def AccelerateModelRefresh(self) -> None:
 		"""
@@ -291,7 +324,12 @@ class TDDepthAnythingRTExt:
 		Loads the TensorRT engine from the specified path and creates the execution context and CUDA stream.
 		"""
 		with self.EngineLock:
+			self.refresh_engine_path()
 			if pathlib.Path(self.trt_path).exists():
+				if not self.Accelerate.validate_engine():
+					self.SafeLogger.error(f"TensorRT engine at {self.trt_path} failed validation; re-run acceleration.")
+					return
+
 				self.SafeLogger.info(f"Loading TensorRT engine from: {self.trt_path}")
 				self.engine = self._load_engine()
 				if self.engine:
@@ -413,6 +451,7 @@ class TDDepthAnythingRTExt:
 			prev (Any): The previous value of the parameter.
 		"""
 		self.Accelerate.model_type = par.eval()
+		self.refresh_engine_path()
 	
 	def OnValueChangeResolutionw(self, par: Any, prev: Any) -> None:
 		"""
@@ -423,6 +462,7 @@ class TDDepthAnythingRTExt:
 			prev (Any): The previous value of the parameter.
 		"""
 		self.Accelerate.width = par.eval()
+		self.refresh_engine_path()
 		
 	def OnValueChangeResolutionh(self, par: Any, prev: Any) -> None:
 		"""
@@ -433,6 +473,7 @@ class TDDepthAnythingRTExt:
 			prev (Any): The previous value of the parameter.
 		"""
 		self.Accelerate.height = par.eval()
+		self.refresh_engine_path()
 	
 	def OnValueChangeCheckpointdir(self, par: Any, prev: Any) -> None:
 		"""
@@ -443,6 +484,7 @@ class TDDepthAnythingRTExt:
 			prev (Any): The previous value of the parameter.
 		"""
 		self.Accelerate.checkpoints_dir = par.eval()
+		self.refresh_engine_path()
 		
 	def OnValueChangeActive(self, par: Any, prev: Any) -> None:
 		"""
