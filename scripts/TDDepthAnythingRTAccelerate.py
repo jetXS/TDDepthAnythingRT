@@ -10,6 +10,10 @@ import torch.onnx
 import tensorrt as trt
 TRT_LOGGER = trt.Logger(trt.Logger.VERBOSE)
 
+# Prefer TF32 math on Ampere+ for faster matmul with minimal accuracy impact
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 from polygraphy.backend.trt import (
 	CreateConfig,
 	Profile,
@@ -280,6 +284,19 @@ class TDDepthAnythingRTAccelerate:
 			model (_type_, optional): _description_. Defaults to None.
 		"""
 		self.logger.info(f'Accelerating, image shape is {self.width}x{self.height}')
+
+		def gpu_supports_tf32() -> bool:
+			if not torch.cuda.is_available():
+				self.logger.warning("CUDA is not available; skipping TF32 enablement.")
+				return False
+			capability = torch.cuda.get_device_capability()
+			sm_version = capability[0] * 10 + capability[1]
+			if sm_version < 80:
+				self.logger.warning(f"GPU compute capability sm{capability[0]}{capability[1]} detected; TF32 requires SM80+. Proceeding without TF32.")
+				return False
+			self.logger.info(f"GPU compute capability sm{capability[0]}{capability[1]} detected (SM80+); TF32 enabled.")
+			return True
+
 		try:
 			if self.is_engine_built():
 				if self.validate_engine():
@@ -325,7 +342,7 @@ class TDDepthAnythingRTAccelerate:
 					os.makedirs(os.path.dirname(self.engine_path), exist_ok=True)
 				
 				self.logger.info(f"Building TensorRT engine for {self.onnx_path}: {self.engine_path}")
-				
+
 				p = Profile()
 				config_kwargs = {}
 				# Static shape profile including batch dimension.
@@ -334,11 +351,19 @@ class TDDepthAnythingRTAccelerate:
 
 				self.logger.info(f"Created engine profile.")
 
+				config = CreateConfig(
+					fp16=True, refittable=False, profiles=[p], load_timing_cache=None, **config_kwargs
+				)
+				if gpu_supports_tf32():
+					try:
+						config.set_flag(trt.BuilderFlag.TF32)
+						self.logger.info("TensorRT TF32 builder flag set.")
+					except Exception as e:
+						self.logger.warning(f"Unable to set TensorRT TF32 flag: {e}")
+
 				engine = engine_from_network(
 					network_from_onnx_path(self.onnx_path, flags=[trt.OnnxParserFlag.NATIVE_INSTANCENORM]),
-					config=CreateConfig(
-						fp16=True, refittable=False, profiles=[p], load_timing_cache=None, **config_kwargs
-					),
+					config=config,
 					save_timing_cache=None,
 				)
 
