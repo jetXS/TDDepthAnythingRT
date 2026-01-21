@@ -1,14 +1,12 @@
 # TDDepthAnythingRT (with TDPyEnvManager) - an easier setup for DepthAnything with TensorRT
 
-> ⚠️ This is release requires TouchDesigner Experimental build 2025.30000+
->
 > ⚠️ ***10/02/2025*** TensorRT version should now be the cu12 version. In requirements.txt file as `tensorrt-cu12`.
 
 TouchDesigner implementation for Depth Anything v2 with TensorRT, with the latest TouchDesigner tools
 - 🤗 HuggingFace model download and Transformers
 - Using TouchDesigner's TDPyEnvManager
 - Using TouchDesigner's ThreadManager
-- TouchDesigner 2025.31120+
+- TouchDesigner 2025.32280+
 
 Original code by Oleg Chomp (@olegchomp) and updated by JetXS (Michel Didier, Derivative)
 
@@ -19,7 +17,7 @@ Original code by Oleg Chomp (@olegchomp) and updated by JetXS (Michel Didier, De
 * In-TouchDesigner model download, acceleration and inference
   
 ## Usage
-Tested with TouchDesigner 2025.31120+
+Tested with TouchDesigner 2025.32280+
 TensorRT-cu12
 
 ## Install:
